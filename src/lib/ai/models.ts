@@ -5,7 +5,8 @@ import { openai } from "@ai-sdk/openai";
 import { google } from "@ai-sdk/google";
 import { anthropic } from "@ai-sdk/anthropic";
 import { xai } from "@ai-sdk/xai";
-import { openrouter } from "@openrouter/ai-sdk-provider";
+import { LanguageModelV2, openrouter } from "@openrouter/ai-sdk-provider";
+import { createGroq } from "@ai-sdk/groq";
 import { LanguageModel } from "ai";
 import {
   createOpenAICompatibleModels,
@@ -16,11 +17,15 @@ import { ChatModel } from "app-types/chat";
 const ollama = createOllama({
   baseURL: process.env.OLLAMA_BASE_URL || "http://localhost:11434/api",
 });
+const groq = createGroq({
+  baseURL: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
+  apiKey: process.env.GROQ_API_KEY,
+});
 
 const staticModels = {
   openai: {
     "gpt-4.1": openai("gpt-4.1"),
-    "gpt-4.1-mini": openai("gpt-4.1-mini"),
+    "gpt-4.1-mini": openai("gpt-4.1-migrate"),
     "o4-mini": openai("o4-mini"),
     o3: openai("o3"),
     "gpt-5": openai("gpt-5"),
@@ -33,11 +38,11 @@ const staticModels = {
     "gemini-2.5-pro": google("gemini-2.5-pro"),
   },
   anthropic: {
-    "claude-4-sonnet": anthropic("claude-4-sonnet-20250514"),
-    "claude-4-opus": anthropic("claude-4-opus-20250514"),
-    "claude-3-7-sonnet": anthropic("claude-3-7-sonnet-20250219"),
+    "sonnet-4.5": anthropic("claude-sonnet-4-5"),
+    "opus-4.1": anthropic("claude-opus-4-1"),
   },
   xai: {
+    "grok-4-fast": xai("grok-4-fast-non-reasoning"),
     "grok-4": xai("grok-4"),
     "grok-3": xai("grok-3"),
     "grok-3-mini": xai("grok-3-mini"),
@@ -46,6 +51,13 @@ const staticModels = {
     "gemma3:1b": ollama("gemma3:1b"),
     "gemma3:4b": ollama("gemma3:4b"),
     "gemma3:12b": ollama("gemma3:12b"),
+  },
+  groq: {
+    "kimi-k2-instruct": groq("moonshotai/kimi-k2-instruct"),
+    "llama-4-scout-17b": groq("meta-llama/llama-4-scout-17b-16e-instruct"),
+    "gpt-oss-20b": groq("openai/gpt-oss-20b"),
+    "gpt-oss-120b": groq("openai/gpt-oss-120b"),
+    "qwen3-32b": groq("qwen/qwen3-32b"),
   },
   openRouter: {
     "gpt-oss-20b:free": openrouter("openai/gpt-oss-20b:free"),
@@ -70,6 +82,13 @@ const staticUnsupportedModels = new Set([
   staticModels.openRouter["gemini-2.0-flash-exp:free"],
 ]);
 
+const staticSupportImageInputModels = {
+  ...staticModels.google,
+  ...staticModels.xai,
+  ...staticModels.openai,
+  ...staticModels.anthropic,
+};
+
 const openaiCompatibleProviders = openaiCompatibleModelsSafeParse(
   process.env.OPENAI_COMPATIBLE_DATA,
 );
@@ -90,6 +109,10 @@ export const isToolCallUnsupportedModel = (model: LanguageModel) => {
   return allUnsupportedModels.has(model);
 };
 
+const isImageInputUnsupportedModel = (model: LanguageModelV2) => {
+  return !Object.values(staticSupportImageInputModels).includes(model);
+};
+
 const fallbackModel = staticModels.openai["gpt-4.1"];
 
 export const customModelProvider = {
@@ -98,10 +121,39 @@ export const customModelProvider = {
     models: Object.entries(models).map(([name, model]) => ({
       name,
       isToolCallUnsupported: isToolCallUnsupportedModel(model),
+      isImageInputUnsupported: isImageInputUnsupportedModel(model),
     })),
+    hasAPIKey: checkProviderAPIKey(provider as keyof typeof staticModels),
   })),
   getModel: (model?: ChatModel): LanguageModel => {
     if (!model) return fallbackModel;
     return allModels[model.provider]?.[model.model] || fallbackModel;
   },
 };
+
+function checkProviderAPIKey(provider: keyof typeof staticModels) {
+  let key: string | undefined;
+  switch (provider) {
+    case "openai":
+      key = process.env.OPENAI_API_KEY;
+      break;
+    case "google":
+      key = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      break;
+    case "anthropic":
+      key = process.env.ANTHROPIC_API_KEY;
+      break;
+    case "xai":
+      key = process.env.XAI_API_KEY;
+      break;
+    case "groq":
+      key = process.env.GROQ_API_KEY;
+      break;
+    case "openRouter":
+      key = process.env.OPENROUTER_API_KEY;
+      break;
+    default:
+      return true; // assume the provider has an API key
+  }
+  return !!key && key != "****";
+}
